@@ -1,0 +1,5 @@
+# 复制为 ../key.properties，并填写自己的发布密钥信息。
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=dualvolume
+storeFile=../release-keystore.jks

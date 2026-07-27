@@ -1,0 +1,4 @@
+LIBRARY DualVolumeContextMenu
+EXPORTS
+    DllCanUnloadNow
+    DllGetClassObject

@@ -1,0 +1,30 @@
+# Local settings and credentials
+settings.json
+android-app/android/key.properties
+android-app/android/release-keystore.jks
+*.pfx
+*.p12
+
+# Build output
+dist/
+windows/bin/
+windows/.package-stage/
+android-app/build/
+android-app/.dart_tool/
+android-app/.flutter-plugins
+android-app/.flutter-plugins-dependencies
+android-app/.pub/
+android-app/.pub-cache/
+android-app/android/.gradle/
+android-app/android/local.properties
+
+# IDE and OS files
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary sources and logs
+.tmp-*/
+*.log

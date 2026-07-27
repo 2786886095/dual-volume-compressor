@@ -142,8 +142,9 @@ public:
 
     IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* icon) override {
         if (!icon) return E_POINTER;
-        *icon = nullptr;
-        return E_NOTIMPL;
+        const std::wstring iconPath =
+            ModuleDirectory() + L"\\DualVolumeLauncher.exe,-101";
+        return SHStrDupW(iconPath.c_str(), icon);
     }
 
     IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* tooltip) override {

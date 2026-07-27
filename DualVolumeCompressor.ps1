@@ -26,6 +26,150 @@ $script:CurrentProcess = $null
 $script:InputPaths = New-Object 'System.Collections.Generic.List[string]'
 $script:IsLoadingSettings = $false
 $script:CancelRequested = $false
+$script:AppVersion = [version]'1.0.1'
+$script:GitHubRepository = '2786886095/dual-volume-compressor'
+$script:UpdateCheckInProgress = $false
+
+function Get-LatestGitHubRelease {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $headers = @{
+        'Accept' = 'application/vnd.github+json'
+        'User-Agent' = "DualVolumeCompressor/$($script:AppVersion)"
+        'X-GitHub-Api-Version' = '2022-11-28'
+    }
+    $uri = "https://api.github.com/repos/$($script:GitHubRepository)/releases/latest"
+    $release = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -TimeoutSec 15
+    if ($release.draft -or $release.prerelease) {
+        throw 'GitHub 最新发布不是正式版本。'
+    }
+
+    $versionMatch = [regex]::Match([string]$release.tag_name, '\d+(?:\.\d+){1,3}')
+    if (-not $versionMatch.Success) {
+        throw "发布标签格式不正确: $($release.tag_name)"
+    }
+
+    $setupAsset = @($release.assets | Where-Object {
+        $_.name -match '^DualVolumeCompressor-Setup-x64-v.+\.exe$'
+    } | Select-Object -First 1)
+    if ($setupAsset.Count -eq 0) {
+        throw '最新发布中没有 Windows Setup 安装包。'
+    }
+
+    return [pscustomobject]@{
+        Version = [version]$versionMatch.Value
+        Tag = [string]$release.tag_name
+        Name = [string]$release.name
+        Notes = [string]$release.body
+        PageUrl = [string]$release.html_url
+        AssetName = [string]$setupAsset[0].name
+        AssetUrl = [string]$setupAsset[0].browser_download_url
+        AssetDigest = [string]$setupAsset[0].digest
+    }
+}
+
+function Download-And-LaunchUpdate {
+    param(
+        [Parameter(Mandatory = $true)]$ReleaseInfo,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.Form]$Owner,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.Label]$StatusLabel,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.TextBox]$LogText
+    )
+
+    $choice = [System.Windows.Forms.MessageBox]::Show(
+        $Owner,
+        "发现新版本 v$($ReleaseInfo.Version)。`r`n`r`n是否下载并启动 Setup 安装程序？",
+        '发现更新',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Information
+    )
+    if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+        return
+    }
+
+    $updateDir = Join-Path $env:TEMP 'DualVolumeCompressor\Updates'
+    [IO.Directory]::CreateDirectory($updateDir) | Out-Null
+    $setupPath = Join-Path $updateDir ([IO.Path]::GetFileName($ReleaseInfo.AssetName))
+    $StatusLabel.Text = '下载更新...'
+    Add-LogLine -TextBox $LogText -Line "正在下载更新: $($ReleaseInfo.AssetName)"
+    [System.Windows.Forms.Application]::DoEvents()
+
+    Invoke-WebRequest -Uri $ReleaseInfo.AssetUrl -OutFile $setupPath -UseBasicParsing -TimeoutSec 180
+    if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+        throw '更新安装包下载后未找到。'
+    }
+
+    if ($ReleaseInfo.AssetDigest -match '^sha256:([0-9a-fA-F]{64})$') {
+        $expectedHash = $Matches[1].ToUpperInvariant()
+        $actualHash = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash
+        if ($actualHash -ne $expectedHash) {
+            [IO.File]::Delete($setupPath)
+            throw '更新安装包 SHA-256 校验不一致。'
+        }
+        Add-LogLine -TextBox $LogText -Line "更新包校验通过: $actualHash"
+    }
+
+    $StatusLabel.Text = '启动安装...'
+    Add-LogLine -TextBox $LogText -Line "启动安装程序: $setupPath"
+    Start-Process -FilePath $setupPath
+    $Owner.Close()
+}
+
+function Invoke-UpdateCheck {
+    param(
+        [Parameter(Mandatory = $true)][System.Windows.Forms.Form]$Owner,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.Button]$UpdateButton,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.Label]$StatusLabel,
+        [Parameter(Mandatory = $true)][System.Windows.Forms.TextBox]$LogText,
+        [switch]$Automatic
+    )
+
+    if ($script:UpdateCheckInProgress) {
+        return
+    }
+
+    $script:UpdateCheckInProgress = $true
+    $UpdateButton.Enabled = $false
+    $previousStatus = $StatusLabel.Text
+    $StatusLabel.Text = '检查更新...'
+    [System.Windows.Forms.Application]::DoEvents()
+    try {
+        $latest = Get-LatestGitHubRelease
+        Add-LogLine -TextBox $LogText -Line "GitHub 最新版本: v$($latest.Version)，当前版本: v$($script:AppVersion)"
+        if ($latest.Version -gt $script:AppVersion) {
+            Download-And-LaunchUpdate -ReleaseInfo $latest -Owner $Owner -StatusLabel $StatusLabel -LogText $LogText
+        }
+        elseif (-not $Automatic) {
+            [System.Windows.Forms.MessageBox]::Show(
+                $Owner,
+                "当前已是最新版本 v$($script:AppVersion)。",
+                '检查更新',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            ) | Out-Null
+        }
+    }
+    catch {
+        Add-LogLine -TextBox $LogText -Line ('更新检查失败: ' + $_.Exception.Message)
+        if (-not $Automatic) {
+            [System.Windows.Forms.MessageBox]::Show(
+                $Owner,
+                $_.Exception.Message,
+                '更新检查失败',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        }
+    }
+    finally {
+        if (-not $Owner.IsDisposed) {
+            $UpdateButton.Enabled = $true
+            if ($StatusLabel.Text -in @('检查更新...', '下载更新...')) {
+                $StatusLabel.Text = $previousStatus
+            }
+        }
+        $script:UpdateCheckInProgress = $false
+    }
+}
 
 function Quote-WindowsArg {
     param([AllowNull()][string]$Argument)
@@ -953,6 +1097,13 @@ $form.StartPosition = 'CenterScreen'
 $form.Size = New-Object System.Drawing.Size(860, 780)
 $form.MinimumSize = New-Object System.Drawing.Size(860, 720)
 $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+$appIconPath = @(
+    (Join-Path $script:AppDir 'AppIcon.ico'),
+    (Join-Path $script:AppDir 'Assets\AppIcon.ico')
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if ($appIconPath) {
+    $form.Icon = New-Object System.Drawing.Icon($appIconPath)
+}
 $toolTip = New-Object System.Windows.Forms.ToolTip
 
 $title = New-Object System.Windows.Forms.Label
@@ -961,6 +1112,15 @@ $title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 18, [System.D
 $title.Location = New-Object System.Drawing.Point(20, 16)
 $title.Size = New-Object System.Drawing.Size(320, 36)
 $form.Controls.Add($title)
+
+$versionLabel = New-Object System.Windows.Forms.Label
+$versionLabel.Text = "v$($script:AppVersion)"
+$versionLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
+$versionLabel.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
+$versionLabel.Location = New-Object System.Drawing.Point(684, 20)
+$versionLabel.Size = New-Object System.Drawing.Size(126, 28)
+$versionLabel.Anchor = 'Top,Right'
+$form.Controls.Add($versionLabel)
 
 $subtitle = New-Object System.Windows.Forms.Label
 $subtitle.Text = '拖入文件或文件夹，先分卷压缩，再把分卷包合成一个带同一密码的最终压缩包。'
@@ -1206,10 +1366,14 @@ $cancelButton = New-Button -Text '取消' -X 144 -Y 568 -W 92 -H 36
 $cancelButton.Enabled = $false
 $form.Controls.Add($cancelButton)
 
+$updateButton = New-Button -Text '检查更新' -X 246 -Y 568 -W 104 -H 36
+$toolTip.SetToolTip($updateButton, '检查 GitHub Release，下载并启动最新 Setup 安装包')
+$form.Controls.Add($updateButton)
+
 $statusLabel = New-Object System.Windows.Forms.Label
 $statusLabel.Text = '就绪'
-$statusLabel.Location = New-Object System.Drawing.Point(252, 575)
-$statusLabel.Size = New-Object System.Drawing.Size(240, 24)
+$statusLabel.Location = New-Object System.Drawing.Point(362, 575)
+$statusLabel.Size = New-Object System.Drawing.Size(130, 24)
 $form.Controls.Add($statusLabel)
 
 $progress = New-Object System.Windows.Forms.ProgressBar
@@ -1642,7 +1806,22 @@ $cancelButton.Add_Click({
     }
 })
 
+$updateButton.Add_Click({
+    Invoke-UpdateCheck -Owner $form -UpdateButton $updateButton -StatusLabel $statusLabel -LogText $logText
+})
+
+$automaticUpdateTimer = New-Object System.Windows.Forms.Timer
+$automaticUpdateTimer.Interval = 1500
+$automaticUpdateTimer.Add_Tick({
+    $automaticUpdateTimer.Stop()
+    Invoke-UpdateCheck -Owner $form -UpdateButton $updateButton -StatusLabel $statusLabel -LogText $logText -Automatic
+})
+$form.Add_Shown({
+    $automaticUpdateTimer.Start()
+})
+
 $form.Add_FormClosing({
+    $automaticUpdateTimer.Stop()
     if ($cancelButton.Enabled) {
         $choice = [System.Windows.Forms.MessageBox]::Show($form, '压缩仍在进行，确定要取消并退出吗？', '确认退出', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
         if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {

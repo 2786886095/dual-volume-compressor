@@ -22,6 +22,8 @@ android-app/android/local.properties
 .idea/
 *.iml
 .vscode/
+__pycache__/
+*.pyc
 .DS_Store
 Thumbs.db
 

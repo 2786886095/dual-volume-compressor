@@ -22,13 +22,23 @@ Windows 11 与 Android 双平台的双层加密分卷压缩工具。导入文件
 ### 普通启动
 
 1. 安装 [Bandizip](https://www.bandisoft.com/bandizip/) 或 [7-Zip](https://www.7-zip.org/)。
-2. 从 Releases 下载 `DualVolumeCompressor-Windows-x64-*.zip` 并完整解压。
-3. 运行 `Start-Compressor.bat`。
-4. 拖入文件或文件夹并配置压缩参数。
+2. 从 Releases 下载 `DualVolumeCompressor-Setup-x64-*.exe`。
+3. 运行 Setup；安装程序会写入 Program Files、创建开始菜单入口，并自动注册 Windows 11 一级右键菜单。
+4. 从开始菜单启动“**双层分卷压缩器**”，拖入文件或文件夹并配置压缩参数。
 
-也可以把 `bz.exe`、`Bandizip.exe` 或 `7z.exe` 放入项目根目录的 `tools` 文件夹。
+仍提供 `DualVolumeCompressor-Windows-x64-*.zip` 便携包。也可以把 `bz.exe`、`Bandizip.exe` 或 `7z.exe` 放入程序目录的 `tools` 文件夹。
+
+### 软件内更新
+
+- 启动后自动检查公开 GitHub 仓库的最新正式 Release。
+- 主界面提供“**检查更新**”按钮。
+- 发现新版本后，可在软件内下载对应 x64 Setup。
+- 下载完成后会核对 GitHub Release 提供的 SHA-256 摘要，再由用户确认启动安装程序。
+- 更新安装会保留 `settings.json`，待压缩文件列表仍不会持久化。
 
 ### Windows 11 一级右键菜单
+
+使用 Setup 安装时会自动完成以下步骤；便携 ZIP 用户可手动执行：
 
 1. 完整解压 Windows 发布包，不要只从 ZIP 内直接运行。
 2. 双击 `Install-Windows11-ContextMenu.bat`，接受管理员权限提示。
@@ -85,10 +95,19 @@ powershell -ExecutionPolicy Bypass -File .\windows\build-windows.ps1
 ## 发布构建
 
 ```powershell
-.\build-release.ps1 -Version 1.0.0
+.\build-release.ps1 -Version 1.0.1
 ```
 
 产物位于 `dist/windows` 与 `dist/android`。本机配置文件 `settings.json`、Android 签名密钥和待压缩项目都不会进入 Git。
+
+### 重新生成品牌图标
+
+仓库内置统一图标源与派生脚本，可同时生成 Windows ICO、MSIX Logo 和 Android 各密度启动图标：
+
+```powershell
+python -m pip install Pillow
+python .\tools\generate-icons.py
+```
 
 ## 注意事项
 

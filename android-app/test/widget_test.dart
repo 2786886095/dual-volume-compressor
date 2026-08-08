@@ -20,6 +20,7 @@ void main() {
       note: '每次上传网盘时复用',
       baseName: 'backup',
       password: 'visible-password',
+      doubleCompressionEnabled: true,
       innerFormat: '7z',
       outerFormat: 'zip',
       separateOutputs: false,
@@ -42,6 +43,19 @@ void main() {
     expect(restored.volumeMode, 'count');
     expect(restored.volumeCount, 8);
     expect(restored.password, 'visible-password');
+    expect(restored.doubleCompressionEnabled, isTrue);
     expect(restored.outputUri, 'content://output/tree');
+  });
+
+  test('旧方案默认启用双重模式，普通模式可以持久化', () {
+    final legacy = CompressionProfile.fromJson({'name': '旧方案'});
+    expect(legacy.doubleCompressionEnabled, isTrue);
+
+    final ordinary = CompressionProfile.fromJson({
+      ...legacy.toJson(),
+      'name': '普通压缩',
+      'doubleCompressionEnabled': false,
+    });
+    expect(ordinary.doubleCompressionEnabled, isFalse);
   });
 }

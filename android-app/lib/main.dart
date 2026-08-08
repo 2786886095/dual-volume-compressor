@@ -71,6 +71,7 @@ class CompressionProfile {
     required this.note,
     required this.baseName,
     required this.password,
+    required this.doubleCompressionEnabled,
     required this.innerFormat,
     required this.outerFormat,
     required this.separateOutputs,
@@ -91,6 +92,7 @@ class CompressionProfile {
   final String note;
   final String baseName;
   final String password;
+  final bool doubleCompressionEnabled;
   final String innerFormat;
   final String outerFormat;
   final bool separateOutputs;
@@ -112,6 +114,7 @@ class CompressionProfile {
         note: json['note']?.toString() ?? '',
         baseName: json['baseName']?.toString() ?? '',
         password: json['password']?.toString() ?? '',
+        doubleCompressionEnabled: json['doubleCompressionEnabled'] != false,
         innerFormat: json['innerFormat']?.toString() ?? '7z',
         outerFormat: json['outerFormat']?.toString() ?? '7z',
         separateOutputs: json['separateOutputs'] == true,
@@ -133,6 +136,7 @@ class CompressionProfile {
         'note': note,
         'baseName': baseName,
         'password': password,
+        'doubleCompressionEnabled': doubleCompressionEnabled,
         'innerFormat': innerFormat,
         'outerFormat': outerFormat,
         'separateOutputs': separateOutputs,
@@ -186,6 +190,7 @@ class _CompressorPageState extends State<CompressorPage> {
   bool _overwrite = false;
   bool _keepParts = false;
   bool _encryptHeaders = true;
+  bool _doubleCompressionEnabled = true;
   String _innerFormat = '7z';
   String _outerFormat = '7z';
   String _volumeMode = 'size';
@@ -268,6 +273,8 @@ class _CompressorPageState extends State<CompressorPage> {
       _overwrite = preferences.getBool('overwrite') ?? false;
       _keepParts = preferences.getBool('keep_parts') ?? false;
       _encryptHeaders = preferences.getBool('encrypt_headers') ?? true;
+      _doubleCompressionEnabled =
+          preferences.getBool('double_compression_enabled') ?? true;
       _outputUri = preferences.getString('output_uri');
       _outputName = preferences.getString('output_name');
       _loading = false;
@@ -304,6 +311,10 @@ class _CompressorPageState extends State<CompressorPage> {
     await preferences.setBool('overwrite', _overwrite);
     await preferences.setBool('keep_parts', _keepParts);
     await preferences.setBool('encrypt_headers', _encryptHeaders);
+    await preferences.setBool(
+      'double_compression_enabled',
+      _doubleCompressionEnabled,
+    );
     if (_outputUri == null) {
       await preferences.remove('output_uri');
       await preferences.remove('output_name');
@@ -432,6 +443,7 @@ class _CompressorPageState extends State<CompressorPage> {
         note: note.trim(),
         baseName: _baseNameController.text.trim(),
         password: _passwordController.text,
+        doubleCompressionEnabled: _doubleCompressionEnabled,
         innerFormat: _innerFormat,
         outerFormat: _outerFormat,
         separateOutputs: _separateOutputs,
@@ -453,9 +465,11 @@ class _CompressorPageState extends State<CompressorPage> {
       _baseNameController.text = profile.baseName;
       _passwordController.text = profile.password;
       _confirmController.text = profile.password;
+      _doubleCompressionEnabled = profile.doubleCompressionEnabled;
       _innerFormat = profile.innerFormat;
       _outerFormat = profile.outerFormat;
       _separateOutputs = profile.separateOutputs;
+      if (!_doubleCompressionEnabled) _separateOutputs = false;
       _volumeMode = profile.volumeMode;
       _volumeSizeController.text = profile.volumeSize.toString();
       _volumeUnit = profile.volumeUnit;
@@ -558,11 +572,14 @@ class _CompressorPageState extends State<CompressorPage> {
     }
     final volumeSize = int.tryParse(_volumeSizeController.text);
     final volumeCount = int.tryParse(_volumeCountController.text);
-    if (_volumeMode == 'size' && (volumeSize == null || volumeSize < 1)) {
+    if (_doubleCompressionEnabled &&
+        _volumeMode == 'size' &&
+        (volumeSize == null || volumeSize < 1)) {
       _showMessage('分卷大小必须大于 0');
       return;
     }
-    if (_volumeMode == 'count' &&
+    if (_doubleCompressionEnabled &&
+        _volumeMode == 'count' &&
         (volumeCount == null || volumeCount < 2 || volumeCount > 999)) {
       _showMessage('固定分卷数量必须在 2–999 之间');
       return;
@@ -585,6 +602,7 @@ class _CompressorPageState extends State<CompressorPage> {
           'outputUri': _outputUri,
           'separateOutputs': _separateOutputs,
           'baseName': _baseNameController.text,
+          'doubleCompressionEnabled': _doubleCompressionEnabled,
           'innerFormat': _innerFormat,
           'outerFormat': _outerFormat,
           'volumeMode': _volumeMode,
@@ -723,7 +741,7 @@ class _CompressorPageState extends State<CompressorPage> {
               const SizedBox(width: 14),
               const Expanded(
                 child: Text(
-                  '先生成加密分卷，再把所有分卷封装为一个使用相同密码的最终压缩包。也可从系统“分享”菜单直接导入文件。',
+                  '可选择双重分卷压缩，或关闭后按普通方式生成单个压缩包。也可从系统“分享”菜单直接导入文件。',
                   style: TextStyle(height: 1.45),
                 ),
               ),
@@ -813,7 +831,7 @@ class _CompressorPageState extends State<CompressorPage> {
             ),
             const SizedBox(height: 6),
             const Text(
-              '保存格式、分卷参数、压缩等级、输出目录、选项和密码；输入文件列表不会保存。',
+              '保存普通/双重模式、格式、分卷参数、压缩等级、输出目录、选项和密码；输入文件列表不会保存。',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -935,8 +953,28 @@ class _CompressorPageState extends State<CompressorPage> {
             const SizedBox(height: 12),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              value: _separateOutputs,
+              value: _doubleCompressionEnabled,
               onChanged: _running
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _doubleCompressionEnabled = value;
+                        if (!value) _separateOutputs = false;
+                      });
+                      unawaited(_saveSettings());
+                    },
+              title: const Text('启用双重分卷压缩'),
+              subtitle: Text(
+                _doubleCompressionEnabled
+                    ? '先生成分卷，再封装为最终压缩包'
+                    : '普通压缩模式：只生成一个压缩包，不分卷',
+              ),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _separateOutputs,
+              onChanged: _running || !_doubleCompressionEnabled
                   ? null
                   : (value) {
                       setState(() => _separateOutputs = value);
@@ -946,36 +984,54 @@ class _CompressorPageState extends State<CompressorPage> {
               subtitle: const Text('文件使用去扩展名后的名称，文件夹使用文件夹名'),
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _dropdown(
-                    label: '分卷格式',
-                    value: _innerFormat,
-                    values: const {'7z': '7z', 'zip': 'zip'},
-                    onChanged: (value) => setState(() => _innerFormat = value),
+            if (_doubleCompressionEnabled)
+              Row(
+                children: [
+                  Expanded(
+                    child: _dropdown(
+                      label: '分卷格式',
+                      value: _innerFormat,
+                      values: const {'7z': '7z', 'zip': 'zip'},
+                      onChanged: (value) =>
+                          setState(() => _innerFormat = value),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _dropdown(
-                    label: '最终格式',
-                    value: _outerFormat,
-                    values: const {'7z': '7z', 'zip': 'zip'},
-                    onChanged: (value) => setState(() => _outerFormat = value),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _dropdown(
+                      label: '最终格式',
+                      value: _outerFormat,
+                      values: const {'7z': '7z', 'zip': 'zip'},
+                      onChanged: (value) =>
+                          setState(() => _outerFormat = value),
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              )
+            else
+              _dropdown(
+                label: '压缩格式',
+                value: _outerFormat,
+                values: const {'7z': '7z', 'zip': 'zip'},
+                onChanged: (value) => setState(() => _outerFormat = value),
+              ),
             const SizedBox(height: 12),
-            _dropdown(
-              label: '分卷模式',
-              value: _volumeMode,
-              values: const {'size': '按分卷大小', 'count': '固定分卷数量'},
-              onChanged: (value) => setState(() => _volumeMode = value),
-            ),
+            if (_doubleCompressionEnabled)
+              _dropdown(
+                label: '分卷模式',
+                value: _volumeMode,
+                values: const {'size': '按分卷大小', 'count': '固定分卷数量'},
+                onChanged: (value) => setState(() => _volumeMode = value),
+              )
+            else
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.inventory_2_outlined),
+                title: Text('普通单层压缩'),
+                subtitle: Text('分卷大小和分卷数量设置已停用'),
+              ),
             const SizedBox(height: 12),
-            if (_volumeMode == 'size')
+            if (_doubleCompressionEnabled && _volumeMode == 'size')
               Row(
                 children: [
                   Expanded(
@@ -999,7 +1055,7 @@ class _CompressorPageState extends State<CompressorPage> {
                   ),
                 ],
               )
-            else
+            else if (_doubleCompressionEnabled)
               TextField(
                 controller: _volumeCountController,
                 enabled: !_running,
@@ -1082,16 +1138,20 @@ class _CompressorPageState extends State<CompressorPage> {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               value: _keepParts,
-              onChanged: _running
+              onChanged: _running || !_doubleCompressionEnabled
                   ? null
                   : (value) => setState(() => _keepParts = value ?? false),
               title: const Text('保留第一阶段分卷'),
+              subtitle:
+                  _doubleCompressionEnabled ? null : const Text('普通压缩模式下不生成分卷'),
             ),
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               value: _encryptHeaders,
               onChanged: _running ||
-                      (_innerFormat != '7z' && _outerFormat != '7z')
+                      (_doubleCompressionEnabled
+                          ? (_innerFormat != '7z' && _outerFormat != '7z')
+                          : _outerFormat != '7z')
                   ? null
                   : (value) => setState(() => _encryptHeaders = value ?? true),
               title: const Text('7z 文件名加密'),

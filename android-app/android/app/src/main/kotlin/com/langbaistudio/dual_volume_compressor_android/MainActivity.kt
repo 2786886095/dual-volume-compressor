@@ -317,6 +317,7 @@ class MainActivity : FlutterActivity() {
         require(outputRoot.canWrite()) { "输出目录没有写入权限" }
 
         val separate = arguments["separateOutputs"] as? Boolean ?: false
+        val doubleCompressionEnabled = arguments["doubleCompressionEnabled"] as? Boolean ?: true
         val requestedBase = safeName(arguments["baseName"]?.toString() ?: "double-archive")
         val innerFormat = arguments["innerFormat"]?.toString() ?: "7z"
         val outerFormat = arguments["outerFormat"]?.toString() ?: "7z"
@@ -340,6 +341,7 @@ class MainActivity : FlutterActivity() {
                 inputs = jobInputs,
                 outputRoot = outputRoot,
                 baseName = baseName,
+                doubleCompressionEnabled = doubleCompressionEnabled,
                 innerFormat = innerFormat,
                 outerFormat = outerFormat,
                 volumeMode = volumeMode,
@@ -362,7 +364,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun compressJob(
-        inputs: List<File>, outputRoot: DocumentFile, baseName: String, innerFormat: String,
+        inputs: List<File>, outputRoot: DocumentFile, baseName: String, doubleCompressionEnabled: Boolean, innerFormat: String,
         outerFormat: String, volumeMode: String, volumeSize: Long, volumeUnit: String,
         volumeCount: Int, level: Int, password: String, encryptHeaders: Boolean,
         keepParts: Boolean, overwrite: Boolean
@@ -379,6 +381,25 @@ class MainActivity : FlutterActivity() {
             val innerArchive = File(stage, innerName)
             val inputList = File(stage, "inputs.txt")
             inputList.writeText(stagedInputs.joinToString("\n") { it.name }, Charsets.UTF_8)
+
+            if (!doubleCompressionEnabled) {
+                val finalArchive = File(stage, "$baseName.$outerFormat")
+                emitProgress("普通压缩模式: 创建单个压缩包，不生成分卷")
+                run7Zip(
+                    archiveArguments(outerFormat, finalArchive, inputList, level, password, encryptHeaders, null),
+                    sourceRoot
+                )
+                require(finalArchive.isFile) { "普通压缩包生成失败" }
+                val finalDocument = copyToOutput(outputRoot, finalArchive, overwrite)
+                emitProgress("完成: ${finalDocument.name ?: finalArchive.name}")
+                return mapOf(
+                    "name" to (finalDocument.name ?: finalArchive.name),
+                    "uri" to finalDocument.uri.toString(),
+                    "volumeCount" to 0,
+                    "keptFolder" to ""
+                )
+            }
+
             val fixedCount = volumeMode == "count"
 
             emitProgress(if (fixedCount) "阶段 1/2: 创建完整加密压缩包" else "阶段 1/2: 创建分卷压缩包")

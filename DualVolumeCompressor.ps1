@@ -45,7 +45,7 @@ $script:CurrentProcess = $null
 $script:InputPaths = New-Object 'System.Collections.Generic.List[string]'
 $script:IsLoadingSettings = $false
 $script:CancelRequested = $false
-$script:AppVersion = [version]'1.1.0'
+$script:AppVersion = [version]'1.2.0'
 $script:GitHubRepository = '2786886095/dual-volume-compressor'
 $script:UpdateCheckInProgress = $false
 $script:CompressionProfiles = New-Object System.Collections.ArrayList
@@ -739,6 +739,44 @@ function Invoke-CompressionJob {
         $inputList = Join-Path $stageDir 'inputs.txt'
         Write-ListFile -Path $inputList -Lines $Job.Inputs
 
+        if (-not $Job.DoubleCompressionEnabled) {
+            $finalArchive = Join-Path $Job.OutputDir ($Job.BaseName + '.' + $Job.OuterFormat)
+            if (Test-Path -LiteralPath $finalArchive -PathType Leaf) {
+                if ($Job.Overwrite) {
+                    Remove-Item -LiteralPath $finalArchive -Force
+                }
+                else {
+                    throw ('压缩包已存在: {0}' -f $finalArchive)
+                }
+            }
+
+            Report-ProgressLine -Reporter $Worker -Line '普通压缩模式: 正在生成单个压缩包，不创建分卷...'
+            Invoke-ArchiveCreate `
+                -Engine $Job.Engine `
+                -Exe $toolPath `
+                -ArchivePath $finalArchive `
+                -Format $Job.OuterFormat `
+                -Inputs @($Job.Inputs) `
+                -WorkingDirectory $stageDir `
+                -VolumeSpec '' `
+                -Level $Job.Level `
+                -Password $Job.Password `
+                -EncryptHeaders $Job.EncryptHeaders `
+                -Worker $Worker `
+                -ListFile $inputList
+
+            if (-not (Test-Path -LiteralPath $finalArchive -PathType Leaf)) {
+                throw '普通压缩包生成失败。'
+            }
+            Report-ProgressLine -Reporter $Worker -Line ('完成: {0}' -f $finalArchive)
+            return [pscustomobject]@{
+                FinalArchive = $finalArchive
+                VolumeCount = 0
+                KeptDir = $null
+                IsDoubleCompression = $false
+            }
+        }
+
         $innerBaseName = ('{0}.payload.{1}' -f $Job.BaseName, $Job.InnerFormat)
         $innerArchive = Join-Path $stageDir $innerBaseName
         $innerStem = [System.IO.Path]::GetFileNameWithoutExtension($innerBaseName)
@@ -838,6 +876,7 @@ function Invoke-CompressionJob {
             FinalArchive = $finalArchive
             VolumeCount = $volumes.Count
             KeptDir = $keptDir
+            IsDoubleCompression = $true
         }
     }
     finally {
@@ -957,20 +996,39 @@ function Get-PresetValues {
 }
 
 function Update-HeaderEncryptAvailability {
-    $headerEncryptCheck.Enabled = (($engineBox.SelectedItem -eq '7-Zip') -and (($innerFormat.SelectedItem -eq '7z') -or ($outerFormat.SelectedItem -eq '7z')))
+    $usesSevenZipFormat = if ($doubleCompressionCheck.Checked) {
+        ($innerFormat.SelectedItem -eq '7z') -or ($outerFormat.SelectedItem -eq '7z')
+    }
+    else {
+        $outerFormat.SelectedItem -eq '7z'
+    }
+    $headerEncryptCheck.Enabled = (($engineBox.SelectedItem -eq '7-Zip') -and $usesSevenZipFormat)
 }
 
 function Update-VolumeModeAvailability {
-    $fixedCount = ($volumeModeBox.SelectedItem -eq '固定分卷数量')
-    $volumeSize.Enabled = -not $fixedCount
-    $volumeUnit.Enabled = -not $fixedCount
+    $doubleEnabled = [bool]$doubleCompressionCheck.Checked
+    $fixedCount = $doubleEnabled -and ($volumeModeBox.SelectedItem -eq '固定分卷数量')
+    $volumeModeLabel.Enabled = $doubleEnabled
+    $volumeModeBox.Enabled = $doubleEnabled
+    $innerLabel.Enabled = $doubleEnabled
+    $innerFormat.Enabled = $doubleEnabled
+    $keepPartsCheck.Enabled = $doubleEnabled
+    $separateOutputsCheck.Enabled = $doubleEnabled
+    if (-not $doubleEnabled -and $separateOutputsCheck.Checked) {
+        $separateOutputsCheck.Checked = $false
+    }
+    $outerLabel.Text = if ($doubleEnabled) { '最终格式' } else { '压缩格式' }
+    $volumeSize.Enabled = $doubleEnabled -and -not $fixedCount
+    $volumeUnit.Enabled = $doubleEnabled -and -not $fixedCount
     $volumeCount.Enabled = $fixedCount
-    $volumeSizeLabel.Visible = -not $fixedCount
-    $volumeSize.Visible = -not $fixedCount
-    $volumeUnit.Visible = -not $fixedCount
+    $volumeSizeLabel.Visible = $doubleEnabled -and -not $fixedCount
+    $volumeSize.Visible = $doubleEnabled -and -not $fixedCount
+    $volumeUnit.Visible = $doubleEnabled -and -not $fixedCount
     $volumeCountLabel.Visible = $fixedCount
     $volumeCount.Visible = $fixedCount
     $volumeCountSuffix.Visible = $fixedCount
+    $singleModeLabel.Visible = -not $doubleEnabled
+    Update-HeaderEncryptAvailability
 }
 
 function Update-NamePresetAvailability {
@@ -1030,6 +1088,7 @@ function Get-CurrentCompressionProfile {
         ToolPath = ([string]$sevenZipText.Text).Trim()
         OutputDir = ([string]$outputText.Text).Trim()
         BaseName = ([string]$baseText.Text).Trim()
+        DoubleCompressionEnabled = [bool]$doubleCompressionCheck.Checked
         InnerFormat = [string]$innerFormat.SelectedItem
         OuterFormat = [string]$outerFormat.SelectedItem
         SeparateOutputs = [bool]$separateOutputsCheck.Checked
@@ -1065,6 +1124,9 @@ function Apply-CompressionProfile {
             [void](Add-PresetValue -ComboBox $baseText -Value $profileBaseName -CaseSensitive $false)
         }
         $baseText.Text = $profileBaseName
+
+        $doubleProperty = $Profile.PSObject.Properties['DoubleCompressionEnabled']
+        $doubleCompressionCheck.Checked = if ($null -eq $doubleProperty) { $true } else { [bool]$Profile.DoubleCompressionEnabled }
 
         Set-ComboSelection -ComboBox $innerFormat -Value ([string]$Profile.InnerFormat)
         Set-ComboSelection -ComboBox $outerFormat -Value ([string]$Profile.OuterFormat)
@@ -1195,6 +1257,8 @@ function Apply-SavedSettings {
 
         Set-ComboSelection -ComboBox $innerFormat -Value $Settings.InnerFormat
         Set-ComboSelection -ComboBox $outerFormat -Value $Settings.OuterFormat
+        $doubleProperty = $Settings.PSObject.Properties['DoubleCompressionEnabled']
+        $doubleCompressionCheck.Checked = if ($null -eq $doubleProperty) { $true } else { [bool]$Settings.DoubleCompressionEnabled }
         Set-ComboSelection -ComboBox $volumeModeBox -Value $Settings.VolumeMode
         Set-NumericValue -Control $volumeSize -Value $Settings.VolumeSize
         Set-ComboSelection -ComboBox $volumeUnit -Value $Settings.VolumeUnit
@@ -1273,12 +1337,13 @@ function Save-CurrentSettings {
     }
 
     $settings = [pscustomobject][ordered]@{
-        Version = 3
+        Version = 4
         Engine = [string]$engineBox.SelectedItem
         ToolPath = ([string]$sevenZipText.Text).Trim()
         OutputDir = ([string]$outputText.Text).Trim()
         BaseName = ([string]$baseText.Text).Trim()
         NamePresets = [string[]]@(Get-PresetValues -ComboBox $baseText)
+        DoubleCompressionEnabled = [bool]$doubleCompressionCheck.Checked
         InnerFormat = [string]$innerFormat.SelectedItem
         OuterFormat = [string]$outerFormat.SelectedItem
         VolumeMode = [string]$volumeModeBox.SelectedItem
@@ -1536,6 +1601,11 @@ $volumeCountSuffix = New-Label -Text '个' -X 426 -Y 450 -W 40
 $volumeCountSuffix.Visible = $false
 $form.Controls.Add($volumeCountSuffix)
 
+$singleModeLabel = New-Label -Text '普通压缩：生成单个压缩包，不分卷' -X 258 -Y 450 -W 250
+$singleModeLabel.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
+$singleModeLabel.Visible = $false
+$form.Controls.Add($singleModeLabel)
+
 $levelLabel = New-Label -Text '压缩等级' -X 520 -Y 450 -W 72
 $form.Controls.Add($levelLabel)
 
@@ -1566,6 +1636,14 @@ $headerEncryptCheck.Size = New-Object System.Drawing.Size(120, 26)
 $headerEncryptCheck.Checked = $true
 $headerEncryptCheck.Enabled = ($engineBox.SelectedItem -eq '7-Zip')
 $form.Controls.Add($headerEncryptCheck)
+
+$doubleCompressionCheck = New-Object System.Windows.Forms.CheckBox
+$doubleCompressionCheck.Text = '启用双重分卷压缩'
+$doubleCompressionCheck.Location = New-Object System.Drawing.Point(472, 487)
+$doubleCompressionCheck.Size = New-Object System.Drawing.Size(166, 26)
+$doubleCompressionCheck.Checked = $true
+$toolTip.SetToolTip($doubleCompressionCheck, '关闭后按普通压缩方式生成单个压缩包，不创建分卷')
+$form.Controls.Add($doubleCompressionCheck)
 
 $passwordLabel = New-Label -Text '统一密码' -X 22 -Y 526 -W 84
 $form.Controls.Add($passwordLabel)
@@ -1664,7 +1742,7 @@ $engineBox.Add_SelectedIndexChanged({
     $engine = [string]$engineBox.SelectedItem
     $detected = Find-CompressionTool -Engine $engine
     $sevenZipText.Text = $detected
-    $headerEncryptCheck.Enabled = (($engine -eq '7-Zip') -and (($innerFormat.SelectedItem -eq '7z') -or ($outerFormat.SelectedItem -eq '7z')))
+    Update-HeaderEncryptAvailability
 })
 
 $browseSevenZipButton.Add_Click({
@@ -1843,14 +1921,18 @@ $deletePasswordButton.Add_Click({
 })
 
 $innerFormat.Add_SelectedIndexChanged({
-    $headerEncryptCheck.Enabled = (($engineBox.SelectedItem -eq '7-Zip') -and (($innerFormat.SelectedItem -eq '7z') -or ($outerFormat.SelectedItem -eq '7z')))
+    Update-HeaderEncryptAvailability
 })
 
 $outerFormat.Add_SelectedIndexChanged({
-    $headerEncryptCheck.Enabled = (($engineBox.SelectedItem -eq '7-Zip') -and (($innerFormat.SelectedItem -eq '7z') -or ($outerFormat.SelectedItem -eq '7z')))
+    Update-HeaderEncryptAvailability
 })
 
 $volumeModeBox.Add_SelectedIndexChanged({
+    Update-VolumeModeAvailability
+})
+
+$doubleCompressionCheck.Add_CheckedChanged({
     Update-VolumeModeAvailability
 })
 
@@ -1904,6 +1986,7 @@ $startButton.Add_Click({
         }
 
         $separateOutputs = [bool]$separateOutputsCheck.Checked
+        $doubleCompressionEnabled = [bool]$doubleCompressionCheck.Checked
         $baseName = Get-SafeFileName -Name $baseText.Text
         if (-not $separateOutputs) {
             $baseText.Text = $baseName
@@ -1957,6 +2040,7 @@ $startButton.Add_Click({
                     Inputs = [string[]]@($inputPath)
                     OutputDir = $outputDirResolved
                     BaseName = $itemBaseName
+                    DoubleCompressionEnabled = $doubleCompressionEnabled
                     InnerFormat = $innerFormatValue
                     OuterFormat = $outerFormatValue
                     VolumeMode = $volumeModeValue
@@ -1997,6 +2081,7 @@ $startButton.Add_Click({
                 Inputs = [string[]]@($script:InputPaths)
                 OutputDir = $outputDirResolved
                 BaseName = $baseName
+                DoubleCompressionEnabled = $doubleCompressionEnabled
                 InnerFormat = $innerFormatValue
                 OuterFormat = $outerFormatValue
                 VolumeMode = $volumeModeValue
@@ -2014,7 +2099,10 @@ $startButton.Add_Click({
         Add-LogLine -TextBox $logText -Line '任务开始。'
         Add-LogLine -TextBox $logText -Line ('压缩核心: {0}' -f $engine)
         Add-LogLine -TextBox $logText -Line ('输出模式: {0}' -f $(if ($separateOutputs) { '每个输入项单独生成最终包' } else { '全部输入合并为一个最终包' }))
-        Add-LogLine -TextBox $logText -Line ('分卷模式: {0}' -f $(if ($volumeModeValue -eq '固定分卷数量') { ('固定生成 ' + $volumeCountValue + ' 个') } else { ('每卷 ' + $volumeSize.Value + ' ' + $volumeUnit.SelectedItem) }))
+        Add-LogLine -TextBox $logText -Line ('压缩模式: {0}' -f $(if ($doubleCompressionEnabled) { '双重分卷压缩' } else { '普通单层压缩（不分卷）' }))
+        if ($doubleCompressionEnabled) {
+            Add-LogLine -TextBox $logText -Line ('分卷模式: {0}' -f $(if ($volumeModeValue -eq '固定分卷数量') { ('固定生成 ' + $volumeCountValue + ' 个') } else { ('每卷 ' + $volumeSize.Value + ' ' + $volumeUnit.SelectedItem) }))
+        }
         Add-LogLine -TextBox $logText -Line ('输入数量: {0}' -f $script:InputPaths.Count)
         Add-LogLine -TextBox $logText -Line ('最终输出: {0}' -f $(if ($separateOutputs) { $outputDirResolved } else { $plannedArchives[0] }))
 
@@ -2039,7 +2127,10 @@ $startButton.Add_Click({
             $statusLabel.Text = '完成'
             if ($results.Count -eq 1) {
                 $result = $results[0]
-                $message = "最终压缩包:`r`n$($result.FinalArchive)`r`n`r`n分卷数: $($result.VolumeCount)"
+                $message = "最终压缩包:`r`n$($result.FinalArchive)"
+                if ($result.IsDoubleCompression) {
+                    $message += "`r`n`r`n分卷数: $($result.VolumeCount)"
+                }
                 if ($result.KeptDir) {
                     $message += "`r`n分卷保留目录:`r`n$($result.KeptDir)"
                 }

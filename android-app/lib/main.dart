@@ -481,18 +481,23 @@ class _CompressorPageState extends State<CompressorPage> {
       _outputName = profile.outputName;
     });
     await _saveSettings();
-    _showMessage('已应用方案预设：${profile.name}');
+    _showMessage('已切换方案预设：${profile.name}');
   }
 
-  void _selectCompressionProfile(int? index) {
+  Future<void> _selectCompressionProfile(int? index) async {
+    CompressionProfile? selectedProfile;
     setState(() {
       _selectedCompressionProfileIndex = index;
       if (index != null && index >= 0 && index < _compressionProfiles.length) {
         final profile = _compressionProfiles[index];
+        selectedProfile = profile;
         _profileNameController.text = profile.name;
         _profileNoteController.text = profile.note;
       }
     });
+    if (selectedProfile != null) {
+      await _applyCompressionProfile(selectedProfile!);
+    }
   }
 
   void _newCompressionProfile() {
@@ -527,15 +532,6 @@ class _CompressorPageState extends State<CompressorPage> {
     });
     await _saveSettings();
     _showMessage('当前配置已保存为：$name');
-  }
-
-  Future<void> _applySelectedCompressionProfile() async {
-    final index = _selectedCompressionProfileIndex;
-    if (index == null || index < 0 || index >= _compressionProfiles.length) {
-      _showMessage('请先选择一个方案预设。');
-      return;
-    }
-    await _applyCompressionProfile(_compressionProfiles[index]);
   }
 
   Future<void> _deleteSelectedCompressionProfile() async {
@@ -813,13 +809,6 @@ class _CompressorPageState extends State<CompressorPage> {
                           : _deleteSelectedCompressionProfile,
                   icon: const Icon(Icons.delete_outline),
                   label: const Text('删除'),
-                ),
-                OutlinedButton(
-                  onPressed:
-                      _running || _selectedCompressionProfileIndex == null
-                          ? null
-                          : _applySelectedCompressionProfile,
-                  child: const Text('应用所选'),
                 ),
                 FilledButton.icon(
                   onPressed: _running ? null : _saveCurrentCompressionProfile,

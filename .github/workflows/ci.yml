@@ -41,3 +41,17 @@ jobs:
             $errors += $parseErrors
           }
           if ($errors.Count) { $errors | Format-List; exit 1 }
+      - name: Verify profile presets switch immediately
+        shell: powershell
+        run: |
+          $source = [IO.File]::ReadAllText((Resolve-Path '.\DualVolumeCompressor.ps1'))
+          if ($source.Contains('$applyProfileButton')) {
+            throw 'The separate profile apply button is still present.'
+          }
+          $handler = [regex]::Match(
+            $source,
+            '(?s)\$profileBox\.Add_SelectedIndexChanged\(\{.*?Apply-CompressionProfile\s+-Profile\s+\$script:CompressionProfiles\[\$index\].*?\}\)'
+          )
+          if (-not $handler.Success) {
+            throw 'The profile selector does not switch profiles immediately.'
+          }

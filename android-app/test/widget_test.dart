@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dual_volume_compressor_android/main.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -59,5 +61,14 @@ void main() {
     });
     expect(ordinary.doubleCompressionEnabled, isFalse);
     expect(ordinary.separateOutputs, isTrue);
+  });
+
+  test('方案预设选择后直接切换且界面没有应用按钮', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    expect(source, isNot(contains("child: const Text('应用所选')")));
+    expect(
+      source,
+      contains('await _applyCompressionProfile(selectedProfile!)'),
+    );
   });
 }

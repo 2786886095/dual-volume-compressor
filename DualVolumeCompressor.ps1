@@ -45,7 +45,7 @@ $script:CurrentProcess = $null
 $script:InputPaths = New-Object 'System.Collections.Generic.List[string]'
 $script:IsLoadingSettings = $false
 $script:CancelRequested = $false
-$script:AppVersion = [version]'1.2.1'
+$script:AppVersion = [version]'1.2.2'
 $script:GitHubRepository = '2786886095/dual-volume-compressor'
 $script:UpdateCheckInProgress = $false
 $script:CompressionProfiles = New-Object System.Collections.ArrayList
@@ -1061,7 +1061,6 @@ function Update-CompressionProfileControls {
     }
 
     $hasProfile = ($profileBox.SelectedIndex -gt 0)
-    $applyProfileButton.Enabled = $hasProfile
     $deleteProfileButton.Enabled = $hasProfile
     $note = if ($hasProfile) { [string]$script:CompressionProfiles[$profileBox.SelectedIndex - 1].Note } else { '' }
     $toolTip.SetToolTip($profileBox, $note)
@@ -1405,7 +1404,7 @@ $profileBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
 $profileBox.Location = New-Object System.Drawing.Point(470, 51)
 $profileBox.Size = New-Object System.Drawing.Size(180, 26)
 $profileBox.Anchor = 'Top,Right'
-$toolTip.SetToolTip($profileBox, '选择已保存的整套方案；悬停可查看备注')
+$toolTip.SetToolTip($profileBox, '选择后立即切换整套方案；悬停可查看备注')
 $form.Controls.Add($profileBox)
 
 $saveProfileButton = New-Button -Text '保存' -X 656 -Y 48 -W 50 -H 30
@@ -1413,12 +1412,7 @@ $saveProfileButton.Anchor = 'Top,Right'
 $toolTip.SetToolTip($saveProfileButton, '把当前全部压缩配置保存为预设')
 $form.Controls.Add($saveProfileButton)
 
-$applyProfileButton = New-Button -Text '应用' -X 710 -Y 48 -W 50 -H 30
-$applyProfileButton.Anchor = 'Top,Right'
-$applyProfileButton.Enabled = $false
-$form.Controls.Add($applyProfileButton)
-
-$deleteProfileButton = New-Button -Text '删除' -X 764 -Y 48 -W 46 -H 30
+$deleteProfileButton = New-Button -Text '删除' -X 710 -Y 48 -W 50 -H 30
 $deleteProfileButton.Anchor = 'Top,Right'
 $deleteProfileButton.Enabled = $false
 $form.Controls.Add($deleteProfileButton)
@@ -1804,10 +1798,14 @@ $profileBox.Add_SelectedIndexChanged({
     if ($script:IsLoadingSettings) { return }
     $index = $profileBox.SelectedIndex - 1
     $hasProfile = ($index -ge 0 -and $index -lt $script:CompressionProfiles.Count)
-    $applyProfileButton.Enabled = $hasProfile
     $deleteProfileButton.Enabled = $hasProfile
     $note = if ($hasProfile) { [string]$script:CompressionProfiles[$index].Note } else { '' }
     $toolTip.SetToolTip($profileBox, $note)
+    if ($hasProfile) {
+        $profileName = [string]$script:CompressionProfiles[$index].Name
+        Apply-CompressionProfile -Profile $script:CompressionProfiles[$index]
+        Add-LogLine -TextBox $logText -Line "已切换方案预设: $profileName"
+    }
 })
 
 $saveProfileButton.Add_Click({
@@ -1836,15 +1834,6 @@ $saveProfileButton.Add_Click({
     Update-CompressionProfileControls -SelectedIndex $targetIndex
     Save-CurrentSettings
     Add-LogLine -TextBox $logText -Line "已保存当前配置为方案预设: $($profile.Name)"
-})
-
-$applyProfileButton.Add_Click({
-    $index = $profileBox.SelectedIndex - 1
-    if ($index -ge 0 -and $index -lt $script:CompressionProfiles.Count) {
-        $profileName = [string]$script:CompressionProfiles[$index].Name
-        Apply-CompressionProfile -Profile $script:CompressionProfiles[$index]
-        Add-LogLine -TextBox $logText -Line "已应用方案预设: $profileName"
-    }
 })
 
 $deleteProfileButton.Add_Click({

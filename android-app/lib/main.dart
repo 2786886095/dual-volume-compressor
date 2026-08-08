@@ -65,6 +65,91 @@ class InputItem {
       );
 }
 
+class CompressionProfile {
+  const CompressionProfile({
+    required this.name,
+    required this.note,
+    required this.baseName,
+    required this.password,
+    required this.innerFormat,
+    required this.outerFormat,
+    required this.separateOutputs,
+    required this.volumeMode,
+    required this.volumeSize,
+    required this.volumeUnit,
+    required this.volumeCount,
+    required this.level,
+    required this.overwrite,
+    required this.keepParts,
+    required this.encryptHeaders,
+    required this.outputUri,
+    required this.outputName,
+    required this.updatedAt,
+  });
+
+  final String name;
+  final String note;
+  final String baseName;
+  final String password;
+  final String innerFormat;
+  final String outerFormat;
+  final bool separateOutputs;
+  final String volumeMode;
+  final int volumeSize;
+  final String volumeUnit;
+  final int volumeCount;
+  final int level;
+  final bool overwrite;
+  final bool keepParts;
+  final bool encryptHeaders;
+  final String? outputUri;
+  final String? outputName;
+  final String updatedAt;
+
+  factory CompressionProfile.fromJson(Map<String, dynamic> json) =>
+      CompressionProfile(
+        name: json['name']?.toString() ?? '',
+        note: json['note']?.toString() ?? '',
+        baseName: json['baseName']?.toString() ?? '',
+        password: json['password']?.toString() ?? '',
+        innerFormat: json['innerFormat']?.toString() ?? '7z',
+        outerFormat: json['outerFormat']?.toString() ?? '7z',
+        separateOutputs: json['separateOutputs'] == true,
+        volumeMode: json['volumeMode']?.toString() ?? 'size',
+        volumeSize: (json['volumeSize'] as num?)?.toInt() ?? 500,
+        volumeUnit: json['volumeUnit']?.toString() ?? 'MB',
+        volumeCount: (json['volumeCount'] as num?)?.toInt() ?? 5,
+        level: (json['level'] as num?)?.toInt() ?? 5,
+        overwrite: json['overwrite'] == true,
+        keepParts: json['keepParts'] == true,
+        encryptHeaders: json['encryptHeaders'] != false,
+        outputUri: json['outputUri']?.toString(),
+        outputName: json['outputName']?.toString(),
+        updatedAt: json['updatedAt']?.toString() ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'note': note,
+        'baseName': baseName,
+        'password': password,
+        'innerFormat': innerFormat,
+        'outerFormat': outerFormat,
+        'separateOutputs': separateOutputs,
+        'volumeMode': volumeMode,
+        'volumeSize': volumeSize,
+        'volumeUnit': volumeUnit,
+        'volumeCount': volumeCount,
+        'level': level,
+        'overwrite': overwrite,
+        'keepParts': keepParts,
+        'encryptHeaders': encryptHeaders,
+        'outputUri': outputUri,
+        'outputName': outputName,
+        'updatedAt': updatedAt,
+      };
+}
+
 class CompressorPage extends StatefulWidget {
   const CompressorPage({super.key});
 
@@ -85,11 +170,14 @@ class _CompressorPageState extends State<CompressorPage> {
   final _confirmController = TextEditingController();
   final _volumeSizeController = TextEditingController(text: '500');
   final _volumeCountController = TextEditingController(text: '5');
+  final _profileNameController = TextEditingController();
+  final _profileNoteController = TextEditingController();
   final _logController = ScrollController();
 
   final List<InputItem> _inputs = [];
   final List<String> _namePresets = [];
   final List<String> _passwordPresets = [];
+  final List<CompressionProfile> _compressionProfiles = [];
   final List<String> _logs = [];
 
   bool _loading = true;
@@ -105,6 +193,7 @@ class _CompressorPageState extends State<CompressorPage> {
   int _level = 5;
   String? _outputUri;
   String? _outputName;
+  int? _selectedCompressionProfileIndex;
 
   @override
   void initState() {
@@ -126,6 +215,22 @@ class _CompressorPageState extends State<CompressorPage> {
     final passwordJson = await _secureStorage.read(key: 'password_presets');
     final selectedPassword =
         await _secureStorage.read(key: 'selected_password');
+    final profileJson = await _secureStorage.read(key: 'compression_profiles');
+    final loadedProfiles = <CompressionProfile>[];
+    if (profileJson != null && profileJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(profileJson);
+        if (decoded is List) {
+          loadedProfiles.addAll(
+            decoded.whereType<Map>().map(
+                  (value) => CompressionProfile.fromJson(
+                    Map<String, dynamic>.from(value),
+                  ),
+                ),
+          );
+        }
+      } catch (_) {}
+    }
 
     if (!mounted) return;
     setState(() {
@@ -134,6 +239,9 @@ class _CompressorPageState extends State<CompressorPage> {
       _namePresets
         ..clear()
         ..addAll(preferences.getStringList('name_presets') ?? const []);
+      _compressionProfiles
+        ..clear()
+        ..addAll(loadedProfiles.where((profile) => profile.name.isNotEmpty));
       if (passwordJson != null && passwordJson.isNotEmpty) {
         try {
           _passwordPresets
@@ -206,6 +314,12 @@ class _CompressorPageState extends State<CompressorPage> {
     await _secureStorage.write(
       key: 'password_presets',
       value: jsonEncode(_passwordPresets),
+    );
+    await _secureStorage.write(
+      key: 'compression_profiles',
+      value: jsonEncode(
+        _compressionProfiles.map((profile) => profile.toJson()).toList(),
+      ),
     );
     final password = _passwordController.text;
     if (_passwordPresets.contains(password)) {
@@ -310,6 +424,119 @@ class _CompressorPageState extends State<CompressorPage> {
       _confirmController.clear();
     });
     unawaited(_saveSettings());
+  }
+
+  CompressionProfile _captureCompressionProfile(String name, String note) =>
+      CompressionProfile(
+        name: name.trim(),
+        note: note.trim(),
+        baseName: _baseNameController.text.trim(),
+        password: _passwordController.text,
+        innerFormat: _innerFormat,
+        outerFormat: _outerFormat,
+        separateOutputs: _separateOutputs,
+        volumeMode: _volumeMode,
+        volumeSize: int.tryParse(_volumeSizeController.text) ?? 500,
+        volumeUnit: _volumeUnit,
+        volumeCount: int.tryParse(_volumeCountController.text) ?? 5,
+        level: _level,
+        overwrite: _overwrite,
+        keepParts: _keepParts,
+        encryptHeaders: _encryptHeaders,
+        outputUri: _outputUri,
+        outputName: _outputName,
+        updatedAt: DateTime.now().toUtc().toIso8601String(),
+      );
+
+  Future<void> _applyCompressionProfile(CompressionProfile profile) async {
+    setState(() {
+      _baseNameController.text = profile.baseName;
+      _passwordController.text = profile.password;
+      _confirmController.text = profile.password;
+      _innerFormat = profile.innerFormat;
+      _outerFormat = profile.outerFormat;
+      _separateOutputs = profile.separateOutputs;
+      _volumeMode = profile.volumeMode;
+      _volumeSizeController.text = profile.volumeSize.toString();
+      _volumeUnit = profile.volumeUnit;
+      _volumeCountController.text = profile.volumeCount.toString();
+      _level = profile.level;
+      _overwrite = profile.overwrite;
+      _keepParts = profile.keepParts;
+      _encryptHeaders = profile.encryptHeaders;
+      _outputUri = profile.outputUri;
+      _outputName = profile.outputName;
+    });
+    await _saveSettings();
+    _showMessage('已应用方案预设：${profile.name}');
+  }
+
+  void _selectCompressionProfile(int? index) {
+    setState(() {
+      _selectedCompressionProfileIndex = index;
+      if (index != null && index >= 0 && index < _compressionProfiles.length) {
+        final profile = _compressionProfiles[index];
+        _profileNameController.text = profile.name;
+        _profileNoteController.text = profile.note;
+      }
+    });
+  }
+
+  void _newCompressionProfile() {
+    setState(() {
+      _selectedCompressionProfileIndex = null;
+      _profileNameController.clear();
+      _profileNoteController.clear();
+    });
+  }
+
+  Future<void> _saveCurrentCompressionProfile() async {
+    final name = _profileNameController.text.trim();
+    if (name.isEmpty) {
+      _showMessage('请输入预设名称。');
+      return;
+    }
+
+    final profile =
+        _captureCompressionProfile(name, _profileNoteController.text);
+    var targetIndex = _selectedCompressionProfileIndex;
+    targetIndex ??= _compressionProfiles.indexWhere(
+      (item) => item.name.toLowerCase() == name.toLowerCase(),
+    );
+    setState(() {
+      if (targetIndex != null && targetIndex! >= 0) {
+        _compressionProfiles[targetIndex!] = profile;
+      } else {
+        _compressionProfiles.add(profile);
+        targetIndex = _compressionProfiles.length - 1;
+      }
+      _selectedCompressionProfileIndex = targetIndex;
+    });
+    await _saveSettings();
+    _showMessage('当前配置已保存为：$name');
+  }
+
+  Future<void> _applySelectedCompressionProfile() async {
+    final index = _selectedCompressionProfileIndex;
+    if (index == null || index < 0 || index >= _compressionProfiles.length) {
+      _showMessage('请先选择一个方案预设。');
+      return;
+    }
+    await _applyCompressionProfile(_compressionProfiles[index]);
+  }
+
+  Future<void> _deleteSelectedCompressionProfile() async {
+    final index = _selectedCompressionProfileIndex;
+    if (index == null || index < 0 || index >= _compressionProfiles.length) {
+      return;
+    }
+    setState(() {
+      _compressionProfiles.removeAt(index);
+      _selectedCompressionProfileIndex = null;
+      _profileNameController.clear();
+      _profileNoteController.clear();
+    });
+    await _saveSettings();
   }
 
   Future<void> _startCompression() async {
@@ -458,6 +685,8 @@ class _CompressorPageState extends State<CompressorPage> {
                   children: [
                     _buildIntroCard(),
                     const SizedBox(height: 12),
+                    _buildCompressionProfileCard(),
+                    const SizedBox(height: 12),
                     _buildInputCard(),
                     const SizedBox(height: 12),
                     _buildOutputCard(),
@@ -500,6 +729,94 @@ class _CompressorPageState extends State<CompressorPage> {
               ),
             ],
           ),
+        ),
+      );
+
+  Widget _buildCompressionProfileCard() => _sectionCard(
+        title: '方案预设',
+        icon: Icons.bookmarks_outlined,
+        trailing: Text('${_compressionProfiles.length} 个'),
+        child: Column(
+          children: [
+            DropdownButtonFormField<int>(
+              value: _selectedCompressionProfileIndex,
+              decoration: const InputDecoration(labelText: '选择已保存方案'),
+              hint: const Text('尚未选择'),
+              items: _compressionProfiles
+                  .asMap()
+                  .entries
+                  .map(
+                    (entry) => DropdownMenuItem<int>(
+                      value: entry.key,
+                      child: Text(
+                        entry.value.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _running ? null : _selectCompressionProfile,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _profileNameController,
+              enabled: !_running,
+              maxLength: 80,
+              decoration: const InputDecoration(labelText: '预设名称'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _profileNoteController,
+              enabled: !_running,
+              minLines: 2,
+              maxLines: 4,
+              maxLength: 1000,
+              decoration: const InputDecoration(
+                labelText: '自定义备注',
+                hintText: '例如：网盘上传、固定 8 个分卷',
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: _running ? null : _newCompressionProfile,
+                  icon: const Icon(Icons.add),
+                  label: const Text('新建'),
+                ),
+                TextButton.icon(
+                  onPressed:
+                      _running || _selectedCompressionProfileIndex == null
+                          ? null
+                          : _deleteSelectedCompressionProfile,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('删除'),
+                ),
+                OutlinedButton(
+                  onPressed:
+                      _running || _selectedCompressionProfileIndex == null
+                          ? null
+                          : _applySelectedCompressionProfile,
+                  child: const Text('应用所选'),
+                ),
+                FilledButton.icon(
+                  onPressed: _running ? null : _saveCurrentCompressionProfile,
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('保存当前配置'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              '保存格式、分卷参数、压缩等级、输出目录、选项和密码；输入文件列表不会保存。',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
         ),
       );
 
@@ -965,6 +1282,8 @@ class _CompressorPageState extends State<CompressorPage> {
     _confirmController.dispose();
     _volumeSizeController.dispose();
     _volumeCountController.dispose();
+    _profileNameController.dispose();
+    _profileNoteController.dispose();
     _logController.dispose();
     super.dispose();
   }

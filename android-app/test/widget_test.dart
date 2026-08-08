@@ -13,4 +13,35 @@ void main() {
     expect(item.size, 128);
     expect(item.isDirectory, isFalse);
   });
+
+  test('带备注的整套方案可以完整序列化', () {
+    const profile = CompressionProfile(
+      name: '网盘八分卷',
+      note: '每次上传网盘时复用',
+      baseName: 'backup',
+      password: 'visible-password',
+      innerFormat: '7z',
+      outerFormat: 'zip',
+      separateOutputs: false,
+      volumeMode: 'count',
+      volumeSize: 500,
+      volumeUnit: 'MB',
+      volumeCount: 8,
+      level: 7,
+      overwrite: true,
+      keepParts: true,
+      encryptHeaders: true,
+      outputUri: 'content://output/tree',
+      outputName: '输出目录',
+      updatedAt: '2026-08-08T00:00:00.000Z',
+    );
+
+    final restored = CompressionProfile.fromJson(profile.toJson());
+    expect(restored.name, '网盘八分卷');
+    expect(restored.note, '每次上传网盘时复用');
+    expect(restored.volumeMode, 'count');
+    expect(restored.volumeCount, 8);
+    expect(restored.password, 'visible-password');
+    expect(restored.outputUri, 'content://output/tree');
+  });
 }

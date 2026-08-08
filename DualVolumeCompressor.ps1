@@ -21,14 +21,34 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $script:AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$script:SettingsPath = Join-Path $script:AppDir 'settings.json'
+$legacySettingsPath = Join-Path $script:AppDir 'settings.json'
+$appDirPrefix = [IO.Path]::GetFullPath($script:AppDir).TrimEnd('\') + '\'
+$programFilesRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+    ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') + '\' }
+$isInstalledLocation = @($programFilesRoots | Where-Object {
+    $appDirPrefix.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase)
+}).Count -gt 0
+
+if ($isInstalledLocation) {
+    $settingsDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Langbai Studio\双层分卷压缩器'
+    [IO.Directory]::CreateDirectory($settingsDir) | Out-Null
+    $script:SettingsPath = Join-Path $settingsDir 'settings.json'
+    if (-not (Test-Path -LiteralPath $script:SettingsPath) -and (Test-Path -LiteralPath $legacySettingsPath -PathType Leaf)) {
+        Copy-Item -LiteralPath $legacySettingsPath -Destination $script:SettingsPath
+    }
+}
+else {
+    $script:SettingsPath = $legacySettingsPath
+}
 $script:CurrentProcess = $null
 $script:InputPaths = New-Object 'System.Collections.Generic.List[string]'
 $script:IsLoadingSettings = $false
 $script:CancelRequested = $false
-$script:AppVersion = [version]'1.0.1'
+$script:AppVersion = [version]'1.1.0'
 $script:GitHubRepository = '2786886095/dual-volume-compressor'
 $script:UpdateCheckInProgress = $false
+$script:CompressionProfiles = New-Object System.Collections.ArrayList
 
 function Get-LatestGitHubRelease {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -371,7 +391,7 @@ function Save-AppSettings {
     param([pscustomobject]$Settings)
 
     try {
-        $json = $Settings | ConvertTo-Json -Depth 4
+        $json = $Settings | ConvertTo-Json -Depth 8
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($script:SettingsPath, $json, $utf8NoBom)
     }
@@ -960,6 +980,183 @@ function Update-NamePresetAvailability {
     $deleteNameButton.Enabled = $enabled
 }
 
+function Update-CompressionProfileControls {
+    param([int]$SelectedIndex = -1)
+
+    if ($null -eq $profileBox) {
+        return
+    }
+
+    $script:IsLoadingSettings = $true
+    try {
+        $profileBox.Items.Clear()
+        [void]$profileBox.Items.Add('＋ 新建预设')
+        foreach ($profile in @($script:CompressionProfiles)) {
+            [void]$profileBox.Items.Add([string]$profile.Name)
+        }
+        if ($SelectedIndex -ge 0 -and $SelectedIndex -lt $script:CompressionProfiles.Count) {
+            $profileBox.SelectedIndex = $SelectedIndex + 1
+        }
+        else {
+            $profileBox.SelectedIndex = 0
+        }
+    }
+    finally {
+        $script:IsLoadingSettings = $false
+    }
+
+    $hasProfile = ($profileBox.SelectedIndex -gt 0)
+    $applyProfileButton.Enabled = $hasProfile
+    $deleteProfileButton.Enabled = $hasProfile
+    $note = if ($hasProfile) { [string]$script:CompressionProfiles[$profileBox.SelectedIndex - 1].Note } else { '' }
+    $toolTip.SetToolTip($profileBox, $note)
+}
+
+function Get-CurrentCompressionProfile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [AllowEmptyString()][string]$Note = ''
+    )
+
+    $protectedPassword = ''
+    if (-not [string]::IsNullOrEmpty($passwordText.Text)) {
+        $protectedPassword = Protect-Password -Password $passwordText.Text
+    }
+
+    return [pscustomobject][ordered]@{
+        Name = $Name.Trim()
+        Note = $Note.Trim()
+        Engine = [string]$engineBox.SelectedItem
+        ToolPath = ([string]$sevenZipText.Text).Trim()
+        OutputDir = ([string]$outputText.Text).Trim()
+        BaseName = ([string]$baseText.Text).Trim()
+        InnerFormat = [string]$innerFormat.SelectedItem
+        OuterFormat = [string]$outerFormat.SelectedItem
+        SeparateOutputs = [bool]$separateOutputsCheck.Checked
+        VolumeMode = [string]$volumeModeBox.SelectedItem
+        VolumeSize = [int]$volumeSize.Value
+        VolumeUnit = [string]$volumeUnit.SelectedItem
+        VolumeCount = [int]$volumeCount.Value
+        LevelText = [string]$levelBox.SelectedItem
+        Overwrite = [bool]$overwriteCheck.Checked
+        KeepParts = [bool]$keepPartsCheck.Checked
+        EncryptHeaders = [bool]$headerEncryptCheck.Checked
+        PasswordProtected = $protectedPassword
+        UpdatedAt = [DateTime]::UtcNow.ToString('o')
+    }
+}
+
+function Apply-CompressionProfile {
+    param([Parameter(Mandatory = $true)]$Profile)
+
+    $script:IsLoadingSettings = $true
+    try {
+        Set-ComboSelection -ComboBox $engineBox -Value ([string]$Profile.Engine)
+        if (-not [string]::IsNullOrWhiteSpace([string]$Profile.ToolPath)) {
+            $sevenZipText.Text = [string]$Profile.ToolPath
+        }
+        else {
+            $sevenZipText.Text = Find-CompressionTool -Engine ([string]$engineBox.SelectedItem)
+        }
+
+        $outputText.Text = [string]$Profile.OutputDir
+        $profileBaseName = [string]$Profile.BaseName
+        if (-not [string]::IsNullOrWhiteSpace($profileBaseName)) {
+            [void](Add-PresetValue -ComboBox $baseText -Value $profileBaseName -CaseSensitive $false)
+        }
+        $baseText.Text = $profileBaseName
+
+        Set-ComboSelection -ComboBox $innerFormat -Value ([string]$Profile.InnerFormat)
+        Set-ComboSelection -ComboBox $outerFormat -Value ([string]$Profile.OuterFormat)
+        Set-ComboSelection -ComboBox $volumeModeBox -Value ([string]$Profile.VolumeMode)
+        Set-NumericValue -Control $volumeSize -Value $Profile.VolumeSize
+        Set-ComboSelection -ComboBox $volumeUnit -Value ([string]$Profile.VolumeUnit)
+        Set-NumericValue -Control $volumeCount -Value $Profile.VolumeCount
+        Set-ComboSelection -ComboBox $levelBox -Value ([string]$Profile.LevelText)
+
+        $separateOutputsCheck.Checked = [bool]$Profile.SeparateOutputs
+        $overwriteCheck.Checked = [bool]$Profile.Overwrite
+        $keepPartsCheck.Checked = [bool]$Profile.KeepParts
+        $headerEncryptCheck.Checked = [bool]$Profile.EncryptHeaders
+
+        $restoredPassword = ''
+        if (-not [string]::IsNullOrWhiteSpace([string]$Profile.PasswordProtected)) {
+            $restoredPassword = Unprotect-Password -ProtectedPassword ([string]$Profile.PasswordProtected)
+        }
+        if (-not [string]::IsNullOrEmpty($restoredPassword)) {
+            $passwordIndex = Add-PresetValue -ComboBox $passwordText -Value $restoredPassword -CaseSensitive $true
+            $passwordText.SelectedIndex = $passwordIndex
+        }
+        $passwordText.Text = $restoredPassword
+        $confirmText.Text = $restoredPassword
+    }
+    finally {
+        $script:IsLoadingSettings = $false
+        Update-HeaderEncryptAvailability
+        Update-VolumeModeAvailability
+        Update-NamePresetAvailability
+    }
+
+    Save-CurrentSettings
+}
+
+function Read-CompressionProfileDetails {
+    param(
+        [AllowEmptyString()][string]$DefaultName = '',
+        [AllowEmptyString()][string]$DefaultNote = ''
+    )
+
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = '保存当前配置'
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.ClientSize = New-Object System.Drawing.Size(520, 230)
+    $dialog.Font = $form.Font
+    if ($form.Icon) { $dialog.Icon = $form.Icon }
+
+    $nameLabel = New-Label -Text '预设名称' -X 18 -Y 20 -W 88
+    $dialog.Controls.Add($nameLabel)
+    $nameInput = New-Object System.Windows.Forms.TextBox
+    $nameInput.Name = 'CompressionProfileName'
+    $nameInput.Location = New-Object System.Drawing.Point(108, 18)
+    $nameInput.Size = New-Object System.Drawing.Size(390, 26)
+    $nameInput.Text = $DefaultName
+    $dialog.Controls.Add($nameInput)
+
+    $noteLabel = New-Label -Text '备注' -X 18 -Y 62 -W 88
+    $dialog.Controls.Add($noteLabel)
+    $noteInput = New-Object System.Windows.Forms.TextBox
+    $noteInput.Name = 'CompressionProfileNote'
+    $noteInput.Location = New-Object System.Drawing.Point(108, 60)
+    $noteInput.Size = New-Object System.Drawing.Size(390, 105)
+    $noteInput.Multiline = $true
+    $noteInput.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $noteInput.Text = $DefaultNote
+    $dialog.Controls.Add($noteInput)
+
+    $okButton = New-Button -Text '保存' -X 326 -Y 184 -W 82 -H 32
+    $okButton.Name = 'ConfirmCompressionProfileSave'
+    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $dialog.Controls.Add($okButton)
+    $cancelDialogButton = New-Button -Text '取消' -X 416 -Y 184 -W 82 -H 32
+    $cancelDialogButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $dialog.Controls.Add($cancelDialogButton)
+    $dialog.AcceptButton = $okButton
+    $dialog.CancelButton = $cancelDialogButton
+
+    $result = $null
+    if ($dialog.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+        $name = $nameInput.Text.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($name)) {
+            $result = [pscustomobject]@{ Name = $name; Note = $noteInput.Text.Trim() }
+        }
+    }
+    $dialog.Dispose()
+    return $result
+}
+
 function Apply-SavedSettings {
     param($Settings)
 
@@ -1042,12 +1239,23 @@ function Apply-SavedSettings {
             $passwordText.Text = ''
             $confirmText.Clear()
         }
+
+        $script:CompressionProfiles.Clear()
+        $profilesProperty = $Settings.PSObject.Properties['CompressionProfiles']
+        if ($null -ne $profilesProperty) {
+            foreach ($profile in @($Settings.CompressionProfiles)) {
+                if ($null -ne $profile -and -not [string]::IsNullOrWhiteSpace([string]$profile.Name)) {
+                    [void]$script:CompressionProfiles.Add($profile)
+                }
+            }
+        }
     }
     finally {
         $script:IsLoadingSettings = $false
         Update-HeaderEncryptAvailability
         Update-VolumeModeAvailability
         Update-NamePresetAvailability
+        Update-CompressionProfileControls
     }
 }
 
@@ -1065,7 +1273,7 @@ function Save-CurrentSettings {
     }
 
     $settings = [pscustomobject][ordered]@{
-        Version = 2
+        Version = 3
         Engine = [string]$engineBox.SelectedItem
         ToolPath = ([string]$sevenZipText.Text).Trim()
         OutputDir = ([string]$outputText.Text).Trim()
@@ -1084,6 +1292,7 @@ function Save-CurrentSettings {
         EncryptHeaders = [bool]$headerEncryptCheck.Checked
         ProtectedPasswordPresets = [string[]]$protectedPasswordPresets
         SelectedPasswordProtected = $selectedPasswordProtected
+        CompressionProfiles = @($script:CompressionProfiles | ForEach-Object { $_ })
     }
 
     Save-AppSettings -Settings $settings
@@ -1125,8 +1334,32 @@ $form.Controls.Add($versionLabel)
 $subtitle = New-Object System.Windows.Forms.Label
 $subtitle.Text = '拖入文件或文件夹，先分卷压缩，再把分卷包合成一个带同一密码的最终压缩包。'
 $subtitle.Location = New-Object System.Drawing.Point(22, 54)
-$subtitle.Size = New-Object System.Drawing.Size(720, 24)
+$subtitle.Size = New-Object System.Drawing.Size(440, 24)
 $form.Controls.Add($subtitle)
+
+$profileBox = New-Object System.Windows.Forms.ComboBox
+$profileBox.Name = 'CompressionProfileSelector'
+$profileBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+$profileBox.Location = New-Object System.Drawing.Point(470, 51)
+$profileBox.Size = New-Object System.Drawing.Size(180, 26)
+$profileBox.Anchor = 'Top,Right'
+$toolTip.SetToolTip($profileBox, '选择已保存的整套方案；悬停可查看备注')
+$form.Controls.Add($profileBox)
+
+$saveProfileButton = New-Button -Text '保存' -X 656 -Y 48 -W 50 -H 30
+$saveProfileButton.Anchor = 'Top,Right'
+$toolTip.SetToolTip($saveProfileButton, '把当前全部压缩配置保存为预设')
+$form.Controls.Add($saveProfileButton)
+
+$applyProfileButton = New-Button -Text '应用' -X 710 -Y 48 -W 50 -H 30
+$applyProfileButton.Anchor = 'Top,Right'
+$applyProfileButton.Enabled = $false
+$form.Controls.Add($applyProfileButton)
+
+$deleteProfileButton = New-Button -Text '删除' -X 764 -Y 48 -W 46 -H 30
+$deleteProfileButton.Anchor = 'Top,Right'
+$deleteProfileButton.Enabled = $false
+$form.Controls.Add($deleteProfileButton)
 
 $engineLabel = New-Label -Text '压缩核心' -X 22 -Y 92 -W 84
 $form.Controls.Add($engineLabel)
@@ -1490,6 +1723,62 @@ $browseOutputButton.Add_Click({
         $outputText.Text = $dialog.SelectedPath
     }
     $dialog.Dispose()
+})
+
+$profileBox.Add_SelectedIndexChanged({
+    if ($script:IsLoadingSettings) { return }
+    $index = $profileBox.SelectedIndex - 1
+    $hasProfile = ($index -ge 0 -and $index -lt $script:CompressionProfiles.Count)
+    $applyProfileButton.Enabled = $hasProfile
+    $deleteProfileButton.Enabled = $hasProfile
+    $note = if ($hasProfile) { [string]$script:CompressionProfiles[$index].Note } else { '' }
+    $toolTip.SetToolTip($profileBox, $note)
+})
+
+$saveProfileButton.Add_Click({
+    $selectedIndex = $profileBox.SelectedIndex - 1
+    $defaultName = if ($selectedIndex -ge 0) { [string]$script:CompressionProfiles[$selectedIndex].Name } else { '方案-' + (Get-Date -Format 'yyyyMMdd-HHmm') }
+    $defaultNote = if ($selectedIndex -ge 0) { [string]$script:CompressionProfiles[$selectedIndex].Note } else { '' }
+    $details = Read-CompressionProfileDetails -DefaultName $defaultName -DefaultNote $defaultNote
+    if ($null -eq $details) { return }
+
+    $targetIndex = $selectedIndex
+    if ($targetIndex -lt 0) {
+        for ($index = 0; $index -lt $script:CompressionProfiles.Count; $index += 1) {
+            if ([string]::Equals([string]$script:CompressionProfiles[$index].Name, [string]$details.Name, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $targetIndex = $index
+                break
+            }
+        }
+    }
+    $profile = Get-CurrentCompressionProfile -Name ([string]$details.Name) -Note ([string]$details.Note)
+    if ($targetIndex -ge 0) {
+        $script:CompressionProfiles[$targetIndex] = $profile
+    }
+    else {
+        $targetIndex = $script:CompressionProfiles.Add($profile)
+    }
+    Update-CompressionProfileControls -SelectedIndex $targetIndex
+    Save-CurrentSettings
+    Add-LogLine -TextBox $logText -Line "已保存当前配置为方案预设: $($profile.Name)"
+})
+
+$applyProfileButton.Add_Click({
+    $index = $profileBox.SelectedIndex - 1
+    if ($index -ge 0 -and $index -lt $script:CompressionProfiles.Count) {
+        $profileName = [string]$script:CompressionProfiles[$index].Name
+        Apply-CompressionProfile -Profile $script:CompressionProfiles[$index]
+        Add-LogLine -TextBox $logText -Line "已应用方案预设: $profileName"
+    }
+})
+
+$deleteProfileButton.Add_Click({
+    $index = $profileBox.SelectedIndex - 1
+    if ($index -ge 0 -and $index -lt $script:CompressionProfiles.Count) {
+        $script:CompressionProfiles.RemoveAt($index)
+        Update-CompressionProfileControls -SelectedIndex ([Math]::Min($index, $script:CompressionProfiles.Count - 1))
+        Save-CurrentSettings
+    }
 })
 
 $saveNameButton.Add_Click({

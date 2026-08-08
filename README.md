@@ -11,6 +11,7 @@ Windows 11 与 Android 双平台的双层加密分卷压缩工具。导入文件
   - **按分卷大小**：自选 MB/GB。
   - **固定分卷数量**：先生成完整内层包，再按实际字节数均分，严格得到指定数量的非空分卷。
 - 密码始终可见；名称预设与密码预设使用两个独立下拉框，可分别保存、选择和删除。
+- Windows 与 Android 均支持“整套方案预设”：保存格式、分卷参数、压缩等级、输出目录、选项和当前密码，并可为每个方案填写自定义备注；输入文件列表不会进入预设。
 - 配置在重启后恢复，但待压缩文件/文件夹列表不会持久化。
 - 可让每个输入项单独生成最终包；文件使用去扩展名后的名称，文件夹使用文件夹名。
 - 可选覆盖同名包、保留第一层分卷、7z 文件名加密和压缩等级。
@@ -25,6 +26,8 @@ Windows 11 与 Android 双平台的双层加密分卷压缩工具。导入文件
 2. 从 Releases 下载 `DualVolumeCompressor-Setup-x64-*.exe`。
 3. 运行 Setup；安装程序会写入 Program Files、创建开始菜单入口，并自动注册 Windows 11 一级右键菜单。
 4. 从开始菜单启动“**双层分卷压缩器**”，拖入文件或文件夹并配置压缩参数。
+
+主界面标题下方提供方案预设下拉框和“保存 / 应用 / 删除”按钮。点击“保存”即可把当前配置保存为带备注的预设；方案密码使用当前 Windows 用户的 DPAPI 加密。Setup 安装版配置保存在 `%LOCALAPPDATA%\Langbai Studio\双层分卷压缩器\settings.json`，便携版仍使用程序目录内的 `settings.json`，旧安装目录配置会自动迁移。
 
 仍提供 `DualVolumeCompressor-Windows-x64-*.zip` 便携包。也可以把 `bz.exe`、`Bandizip.exe` 或 `7z.exe` 放入程序目录的 `tools` 文件夹。
 
@@ -55,6 +58,8 @@ Windows 11 与 Android 双平台的双层加密分卷压缩工具。导入文件
 2. 在系统提示时允许当前文件管理器安装应用。
 3. 添加文件/文件夹并选择输出目录。
 4. 设置格式、分卷模式、统一密码后开始压缩。
+
+主页面内置“方案预设”卡片，填写名称和备注后点击“保存当前配置”即可复用。Android 会把方案及其中的密码统一写入系统加密存储。
 
 最低系统版本为 Android 7.0（API 24）。APK 内置由官方 7-Zip 26.02 源码构建的 ARM64 原生内核，不依赖手机额外安装压缩软件。密码预设使用 Android 加密存储；普通设置使用应用首选项；输入列表只存在于当前运行会话。
 
@@ -95,7 +100,7 @@ powershell -ExecutionPolicy Bypass -File .\windows\build-windows.ps1
 ## 发布构建
 
 ```powershell
-.\build-release.ps1 -Version 1.0.1
+.\build-release.ps1 -Version 1.1.0
 ```
 
 产物位于 `dist/windows` 与 `dist/android`。本机配置文件 `settings.json`、Android 签名密钥和待压缩项目都不会进入 Git。

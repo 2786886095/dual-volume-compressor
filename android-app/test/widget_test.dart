@@ -55,7 +55,9 @@ void main() {
       ...legacy.toJson(),
       'name': '普通压缩',
       'doubleCompressionEnabled': false,
+      'separateOutputs': true,
     });
     expect(ordinary.doubleCompressionEnabled, isFalse);
+    expect(ordinary.separateOutputs, isTrue);
   });
 }

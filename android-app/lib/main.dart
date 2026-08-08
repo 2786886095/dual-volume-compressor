@@ -469,7 +469,6 @@ class _CompressorPageState extends State<CompressorPage> {
       _innerFormat = profile.innerFormat;
       _outerFormat = profile.outerFormat;
       _separateOutputs = profile.separateOutputs;
-      if (!_doubleCompressionEnabled) _separateOutputs = false;
       _volumeMode = profile.volumeMode;
       _volumeSizeController.text = profile.volumeSize.toString();
       _volumeUnit = profile.volumeUnit;
@@ -959,7 +958,6 @@ class _CompressorPageState extends State<CompressorPage> {
                   : (value) {
                       setState(() {
                         _doubleCompressionEnabled = value;
-                        if (!value) _separateOutputs = false;
                       });
                       unawaited(_saveSettings());
                     },
@@ -967,14 +965,14 @@ class _CompressorPageState extends State<CompressorPage> {
               subtitle: Text(
                 _doubleCompressionEnabled
                     ? '先生成分卷，再封装为最终压缩包'
-                    : '普通压缩模式：只生成一个压缩包，不分卷',
+                    : '普通压缩模式：不生成分卷，可继续使用单独压缩',
               ),
             ),
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: _separateOutputs,
-              onChanged: _running || !_doubleCompressionEnabled
+              onChanged: _running
                   ? null
                   : (value) {
                       setState(() => _separateOutputs = value);

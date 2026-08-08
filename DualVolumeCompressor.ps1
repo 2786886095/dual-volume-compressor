@@ -45,7 +45,7 @@ $script:CurrentProcess = $null
 $script:InputPaths = New-Object 'System.Collections.Generic.List[string]'
 $script:IsLoadingSettings = $false
 $script:CancelRequested = $false
-$script:AppVersion = [version]'1.2.0'
+$script:AppVersion = [version]'1.2.1'
 $script:GitHubRepository = '2786886095/dual-volume-compressor'
 $script:UpdateCheckInProgress = $false
 $script:CompressionProfiles = New-Object System.Collections.ArrayList
@@ -1013,10 +1013,7 @@ function Update-VolumeModeAvailability {
     $innerLabel.Enabled = $doubleEnabled
     $innerFormat.Enabled = $doubleEnabled
     $keepPartsCheck.Enabled = $doubleEnabled
-    $separateOutputsCheck.Enabled = $doubleEnabled
-    if (-not $doubleEnabled -and $separateOutputsCheck.Checked) {
-        $separateOutputsCheck.Checked = $false
-    }
+    $separateOutputsCheck.Enabled = $true
     $outerLabel.Text = if ($doubleEnabled) { '最终格式' } else { '压缩格式' }
     $volumeSize.Enabled = $doubleEnabled -and -not $fixedCount
     $volumeUnit.Enabled = $doubleEnabled -and -not $fixedCount
@@ -1642,7 +1639,7 @@ $doubleCompressionCheck.Text = '启用双重分卷压缩'
 $doubleCompressionCheck.Location = New-Object System.Drawing.Point(472, 487)
 $doubleCompressionCheck.Size = New-Object System.Drawing.Size(166, 26)
 $doubleCompressionCheck.Checked = $true
-$toolTip.SetToolTip($doubleCompressionCheck, '关闭后按普通压缩方式生成单个压缩包，不创建分卷')
+$toolTip.SetToolTip($doubleCompressionCheck, '关闭后按普通压缩方式输出；可继续使用“单独压缩”，但不创建分卷')
 $form.Controls.Add($doubleCompressionCheck)
 
 $passwordLabel = New-Label -Text '统一密码' -X 22 -Y 526 -W 84
